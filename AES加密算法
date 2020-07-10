@@ -1,4 +1,10 @@
-static int W[44][4];
+#include <iostream>
+#include "windows.h"
+
+int keywordlen = 4;
+int Wlen = 44;
+int rod = 10;
+static int W[60][4];
 //S盒，用于字节代换
 static const int S[16][16] = { 0x63,0x7c,0x77,0x7b,0xf2,0x6b,0x6f,0xc5,0x30,0x01,0x67,0x2b,0xfe,0xd7,0xab,0x76,
 0xca,0x82,0xc9,0x7d,0xfa,0x59,0x47,0xf0,0xad,0xd4,0xa2,0xaf,0x9c,0xa4,0x72,0xc0,
@@ -34,7 +40,7 @@ static const int t_S[16][16] = { 0x52,0x09,0x6a,0xd5,0x30,0x36,0xa5,0x38,0xbf,0x
 0xa0,0xe0,0x3b,0x4d,0xae,0x2a,0xf5,0xb0,0xc8,0xeb,0xbb,0x3c,0x83,0x53,0x99,0x61,
 0x17,0x2b,0x04,0x7e,0xba,0x77,0xd6,0x26,0xe1,0x69,0x14,0x63,0x55,0x21,0x0c,0x7d };
 //轮常量
-static const int Rcon[10][4] = { 0x01,0x00,0x00,0x00,
+static const int Rcon[14][4] = { 0x01,0x00,0x00,0x00,
 0x02,0x00,0x00,0x00,
 0x04,0x00,0x00,0x00,
 0x08,0x00,0x00,0x00,
@@ -43,7 +49,12 @@ static const int Rcon[10][4] = { 0x01,0x00,0x00,0x00,
 0x40,0x00,0x00,0x00,
 0x80,0x00,0x00,0x00,
 0x1B,0x00,0x00,0x00,
-0x36,0x00,0x00,0x00 };
+0x36,0x00,0x00,0x00,
+0xd8,0x00,0x00,0x00,
+0xab,0x00,0x00,0x00,
+0x4d,0x00,0x00,0x00,
+0x9a,0x00,0x00,0x00,
+};
 //用于列混合的矩阵
 static const int colM[4][4] = { 2,3,1,1,
 1,2,3,1,
@@ -59,6 +70,33 @@ static const char bBase[64] = { 'A','B','C','D','E',
 'F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z',
 'a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p','q','r','s','t',
 'u','v','w','x','y','z','0','1','2','3','4','5','6','7','8','9','+','/' };
+
+char *GB2312ToUtf8(char*str) {//国标转UTF-8
+	int wlen = MultiByteToWideChar(CP_ACP, 0, str, -1, NULL, 0);
+	wchar_t *unicode = new wchar_t[wlen];
+	MultiByteToWideChar(CP_ACP, 0, str, -1, unicode, wlen);
+
+	int num = 0;
+	num = WideCharToMultiByte(CP_UTF8, 0, unicode, -1, NULL, 0, NULL, NULL);
+	char *utf = new char[num + 1];
+	memset(utf, 0, num + 1);
+	WideCharToMultiByte(CP_UTF8, 0, unicode, -1, utf, num, NULL, NULL);
+	return utf;
+}
+
+void readArray(char *p, int Array[4][4]) { //读取明文到状态矩阵
+	int n = strlen(p);
+	for (int i = 0; i < 4; i++) {
+		for (int j = 0; j < 4; j++) {
+			if (i * 4 + j < n) {
+				Array[j][i] = (int)p[i * 4 + j];//获取每个字节的编码			
+			}
+			else
+				Array[j][i] = 0;//不足16字节填充，填充方式：zeropadding
+		}
+	}
+}
+
 void leftloopshift(int n, int row[4]) { //字节为单位的循环左移
 	for (int j = 0; j < n; j++) {
 		int temp = row[0];
@@ -88,20 +126,31 @@ int* T(int round, int word[4]) {  //T函数，用于密钥拓展
 }
 void extendKey(char *key) {//密钥拓展
 
-	for (int i = 0; i < 4; i++) {     //初始化W[0]、W[1]、W[2]、W[3]
+	for (int i = 0; i < keywordlen; i++) {     //初始化W[0]、W[1]、W[2]、W[3]...
 		for (int j = 0; j < 4; j++) {
 			W[i][j] = *(key + 4 * i + j);
 		}
 	}
-	for (int i = 4; i < 44; i++) {   //密钥拓展
-		if (i % 4 != 0) {
+
+	for (int i = keywordlen; i < Wlen; i++) {   //密钥拓展
+		if (i % keywordlen == 0) {
+			int*t = T(i / keywordlen, W[i - 1]);
 			for (int j = 0; j < 4; j++)
-				W[i][j] = W[i - 4][j] ^ W[i - 1][j];
+				W[i][j] = W[i - keywordlen][j] ^ *(t + j);
+		}
+		else if (keywordlen == 8 && i % keywordlen == 4) {
+			int temp[4];
+			for (int j = 0; j < 4; j++) {//字节代换
+				int row = (W[i - 1][j] & 0xF0) >> 4;
+				int col = W[i - 1][j] & 0xF;
+				temp[j] = S[row][col];
+			}
+			for (int k = 0; k < 4; k++)
+				W[i][k] = W[i - keywordlen][k] ^ temp[k];
 		}
 		else {
-			int *t = T(i / 4, W[i - 1]);
 			for (int j = 0; j < 4; j++)
-				W[i][j] = W[i - 4][j] ^ *(t + j);
+				W[i][j] = W[i - keywordlen][j] ^ W[i - 1][j];
 		}
 	}
 }
@@ -168,17 +217,6 @@ void addRoundKey(int Array[4][4], int round) {  //轮密钥加
 		}
 	}
 }
-void readArray(char *p, int Array[4][4]) { //读取明文到状态矩阵
-	int n = strlen(p);
-	for (int i = 0; i < 4; i++) {
-		for (int j = 0; j < 4; j++) {
-			if (i * 4 + j < n)
-				Array[j][i] = (int)p[i * 4 + j];
-			else
-				Array[j][i] = 0;//不足16字节填充0
-		}
-	}
-}
 
 char *Base64Encode(int*Array, int len) {//base64编码	
 	char *base;      //保存结果
@@ -214,8 +252,10 @@ char *Base64Encode(int*Array, int len) {//base64编码
 			base[len / 3 * 4 + 1] = bBase[(t >> 12) & 0x3f];
 			base[len / 3 * 4] = bBase[t >> 18];
 		}
+		base[len / 3 * 4 + 4] = '\0';
 	}
-	base[len / 3 * 4 + 4] = '\0';
+	else
+		base[len / 3 * 4 + 1] = '\0';
 	return base;
 }
 
@@ -227,40 +267,80 @@ void merge(int Array[4][4], int *p) {//把状态矩阵整合到一维数组
 	}
 }
 
-char* Encrypt(char *p, char *key) {//加密函数
-	int plen = strlen(p);
+char* Encrypt(char *p, char *key) {//加密函数	 
+	char *text = GB2312ToUtf8(p);//转换成utf-8
+	int plen = strlen(text);//明文字节数
 	int keylen = strlen(key);
 
 	if (plen == 0 || plen % 16 != 0) {//明文不是16的倍数则填充0成16字节倍数
 		plen = plen / 16 * 16 + 16;
 	}
 
-	if (keylen != 16 ) {
-		char Error[] = "Error";
-		return Error;
+	if (keylen != 16 && keylen != 24 && keylen != 32) {
+		char ss[] = "密钥字符长度错误！长度必须为16、24和32!";
+		return ss;
+	}
+
+	if (keylen == 24) {
+		keywordlen = 6;
+		Wlen = 52;
+		rod = 12;
+	}
+	else if (keylen == 32) {
+		keywordlen = 8;
+		Wlen = 60;
+		rod = 14;
 	}
 
 	int *temp = new int[plen];
 	extendKey(key);//密钥拓展
 	int stateArray[4][4];//状态矩阵
 	for (int k = 0; k < plen; k += 16) {
-		readArray(p + k, stateArray); //读取明文到状态矩阵中
+		readArray(text + k, stateArray); //读取明文到状态矩阵中
 		addRoundKey(stateArray, 0);    //一开始的轮密钥加
-		for (int i = 1; i < 10; i++) { //前9轮
+		for (int i = 1; i < rod; i++) { //前几轮
 			replaceByte(stateArray);  //字节代换
 			rowShift(stateArray);    //行移位
 			columnsMix(stateArray);  //列混合
 			addRoundKey(stateArray, i);   //轮密钥加
 		}
 
-		//第10轮
+		//最后一轮
 		replaceByte(stateArray);  //字节代换
 		rowShift(stateArray);    //行移位
-		addRoundKey(stateArray, 10); //轮密钥加
+		addRoundKey(stateArray, rod); //轮密钥加
 		merge(stateArray, temp + k);
 
 	}
 	return Base64Encode(temp, plen);
+}
+
+
+
+
+/*************************************解密部分************************************************************/
+
+
+
+
+char *Utf8ToGB2312(char*str) {//utf-8转国标
+	//utf-8转unicode
+	int wlen = MultiByteToWideChar(CP_UTF8, 0, str, -1, NULL, 0);
+	wchar_t *unicode = new wchar_t[wlen];
+	MultiByteToWideChar(CP_UTF8, 0, str, -1, unicode, wlen);
+	//unicode转utf-8
+	int clen = WideCharToMultiByte(CP_ACP, 0, unicode, -1, NULL, 0, NULL, NULL);
+	char *gb2312 = new char[clen + 1];
+	memset(gb2312, 0, clen + 1);
+	WideCharToMultiByte(CP_ACP, 0, unicode, -1, gb2312, clen, NULL, NULL);
+	return gb2312;
+}
+void readCopytogram(int *temp, int Array[4][4]) {//读取16字节密文到状态矩阵
+	for (int i = 0; i < 4; i++) {
+		for (int j = 0; j < 4; j++) {
+			Array[j][i] = temp[i * 4 + j];
+		}
+	}
 }
 void rightloopshift(int n, int row[4]) { //字节为单位的循环右移
 	for (int j = 0; j < n; j++) {
@@ -269,6 +349,10 @@ void rightloopshift(int n, int row[4]) { //字节为单位的循环右移
 			row[i] = row[i - 1];
 		row[0] = temp;
 	}
+}
+void deRowShift(int Array[4][4]) {  //行移位逆操作
+	for (int i = 0; i < 4; i++)
+		rightloopshift(i, Array[i]);
 }
 void deReplaceByte(int Array[4][4]) {//字节代换逆操作
 	for (int i = 0; i < 4; i++) {
@@ -279,10 +363,7 @@ void deReplaceByte(int Array[4][4]) {//字节代换逆操作
 		}
 	}
 }
-void deRowShift(int Array[4][4]) {  //行移位逆操作
-	for (int i = 0; i < 4; i++)
-		rightloopshift(i, Array[i]);
-}
+
 void deColumnsMix(int Array[4][4]) {   //列混合逆操作
 	int temp[4][4] = { 0 };//存放中间值	
 	//矩阵相乘	
@@ -299,13 +380,6 @@ void deColumnsMix(int Array[4][4]) {   //列混合逆操作
 	for (int i = 0; i < 4; i++) {
 		for (int j = 0; j < 4; j++)
 			Array[i][j] = temp[i][j];
-	}
-}
-void readCopytogram(int *temp, int Array[4][4]) {//读取密文到状态矩阵
-	for (int i = 0; i < 4; i++) {
-		for (int j = 0; j < 4; j++) {
-			Array[j][i] = temp[i * 4 + j];
-		}
 	}
 }
 int* Base64Decode(char*p, int &n) {//base64解密，n用来传递非填充字符的个数
@@ -340,6 +414,21 @@ int* Base64Decode(char*p, int &n) {//base64解密，n用来传递非填充字符
 char* Decrypt(char *p, char *key) {//解密
 	int plen = strlen(p);
 	int keylen = strlen(key);
+	if (keylen != 16 && keylen != 24 && keylen != 32) {
+		char ss[] = "密钥字符长度错误！长度必须为16、24和32!";
+		return ss;
+	}
+
+	if (keylen == 24) {
+		keywordlen = 6;
+		Wlen = 52;
+		rod = 12;
+	}
+	else if (keylen == 32) {
+		keywordlen = 8;
+		Wlen = 60;
+		rod = 14;
+	}
 
 	extendKey(key);//密钥拓展
 	int n = 0;//用来保存base64解密后的有效长度
@@ -347,15 +436,15 @@ char* Decrypt(char *p, char *key) {//解密
 	int stateArray[4][4];//状态矩阵
 	for (int k = 0; k < n; k += 16) {
 		readCopytogram(temp + k, stateArray); //读取密文到状态矩阵中
-		addRoundKey(stateArray, 10);    //轮密钥加
-		for (int i = 9; i >= 1; i--) { //前9轮
+		addRoundKey(stateArray, rod);    //轮密钥加
+		for (int i = rod - 1; i >= 1; i--) { //前几轮
 			deRowShift(stateArray);    //逆行移位
 			deReplaceByte(stateArray);  //逆字节代换
 			addRoundKey(stateArray, i);   //轮密钥加
 			deColumnsMix(stateArray);  //逆列混合									
 		}
 
-		//第10轮
+		//最后一轮
 		deRowShift(stateArray);    //逆行移位	
 		deReplaceByte(stateArray);  //逆字节代换	
 		addRoundKey(stateArray, 0); //轮密钥加
@@ -363,12 +452,14 @@ char* Decrypt(char *p, char *key) {//解密
 	}
 	char *result = new char[n + 1];//保存解密后的结果
 	for (int i = 0; i < n; i++) {
-		if (temp[i] == 0) {   //去掉填充0
+		if (temp[i] == 0) {   //去掉填充
 			result[i] = '\0';
 			break;
 		}
 		result[i] = (char)temp[i];
 	}
 	result[n] = '\0';
-	return result;
+	char *t = Utf8ToGB2312(result);
+	delete result;
+	return t;
 }
